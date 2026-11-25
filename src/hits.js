@@ -3,6 +3,7 @@
 const IDS = [
   '6YXJV9sW9nD3cAaRQAtBDs', // Ferrari - James Hype & Miggy Dela Rosa
   '6TWbY1dq8eYtFiMiGdBlOa', // Free Your Mind - Prospa, Cloonee, Sybil
+  '3kPNkracUxYvwpzkdpHMQQ', // Dior - MK & Chrystal
   '4qDpLaFGf5ampf2DXD2TMA', // Where You Are - John Summit & HAYLA
   '32VIrOsJmwvqRm4rWFBCsi', // Shiver - John Summit & HAYLA
   '68lTEhMEx4MxDCJypT6bXE', // Escape (John Summit Remix) - Kx5 & HAYLA
@@ -21,6 +22,16 @@ const IDS = [
   '1GfBLbAhZUWdseuDqhocmn', // Rumble - Skrillex, Fred again.., Flowdan
   '1Xwmm4J0BYmSRush63By5y', // Jungle - Fred again..
   '3Vp3N70WX6bKdZpIFwj1ga', // Hot In It - Tiësto & Charli XCX
+  // Added 2026-11-25, more like Dior (IDs from Spotify search):
+  '1BJJbSX6muJVF2AK7uH1x4', // Move - Adam Port, Stryv, Keinemusik
+  '0NNjJd8RsaUAvuJ0IgenVQ', // Mwaki - Zerb & Sofiya Nzau
+  '2J848BIgJm4iYS6jN6DeRe', // Drinkee (Vintage Culture & John Summit Remix) - SOFI TUKKER
+  '3wo3d0I5H8KjkwGvnz8WbB', // Somedays - Sonny Fodera, Jazzy, D.O.D
+  '5SFCEkybGYmmzKqewtDEaN', // Body Moving - Eliza Rose & Calvin Harris
+  '3AjSfp5FDvwtMU9XBsbS8j', // Push Up - Creeds
+  '6gdDu39yYqPcaTgCwYEW8i', // Turn On The Lights again.. - Fred again.., Swedish House Mafia, Future
+  '5lXY6PTuWXOludKy4zDQwM', // On My Mind - Diplo & SIDEPIECE
+  '2aQpISWUBToaF84DDiTeRV', // Be My Lover (2023 Mix) - Hypaton, David Guetta, La Bouche
 ];
 
 export const HITS = { name: 'Viral House Hits', hits: true, uris: IDS.map(id => 'spotify:track:' + id) };
