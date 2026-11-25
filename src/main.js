@@ -341,6 +341,7 @@ const voice = new Voice();
 const MIC_STAND = new THREE.Vector3(0.73, 0.145, -0.22);
 const micGlow = new THREE.MeshBasicMaterial({ color: 0xff2bd6, toneMapped: false });
 const mic = new THREE.Group(); scene.add(mic);
+const micDock = new THREE.Group(); top.add(micDock);
 {
   const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.0135, 0.0105, 0.14, 16), dark); handle.position.y = -0.072; mic.add(handle);
   const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.0145, 0.022, 18), metal); collar.position.y = 0.006; mic.add(collar);
@@ -349,9 +350,9 @@ const mic = new THREE.Group(); scene.add(mic);
   grille.position.y = 0.04; mic.add(grille);
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.0285, 12, 8), new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true, transparent: true, opacity: 0.5 }));
   mesh.position.y = 0.04; mic.add(mesh);
-  const cradle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.036, 0.02, 24), metal); cradle.position.set(MIC_STAND.x, 0.01, MIC_STAND.z); top.add(cradle);
-  const cradleRing = new THREE.Mesh(new THREE.TorusGeometry(0.031, 0.002, 6, 32), neon(true)); cradleRing.rotation.x = Math.PI / 2; cradleRing.position.set(MIC_STAND.x, 0.021, MIC_STAND.z); top.add(cradleRing);
-  makeText(top, 'MC MIC', MIC_STAND.x, MIC_STAND.z + 0.06, 0.07, 0.018, { color: '#ffd27a' });
+  const cradle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.036, 0.02, 24), metal); cradle.position.set(MIC_STAND.x, 0.01, MIC_STAND.z); micDock.add(cradle);
+  const cradleRing = new THREE.Mesh(new THREE.TorusGeometry(0.031, 0.002, 6, 32), neon(true)); cradleRing.rotation.x = Math.PI / 2; cradleRing.position.set(MIC_STAND.x, 0.021, MIC_STAND.z); micDock.add(cradleRing);
+  makeText(micDock, 'MC MIC', MIC_STAND.x, MIC_STAND.z + 0.06, 0.07, 0.018, { color: '#ffd27a' });
 }
 const micHit = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.2, 0.075), hidden); micHit.position.y = -0.03; mic.add(micHit);
 const UP = new THREE.Vector3(0, 1, 0), _mp = new THREE.Vector3(), _md = new THREE.Vector3(), _mq = new THREE.Quaternion();
@@ -516,11 +517,28 @@ const fxPads = fxDefs.map(([label, sub, color, fn], k) => {
 const padAuto = fxPads[4], padBeams = fxPads[5];
 
 // Big LED screen over the dance floor
+// (In passthrough it shrinks to a small now-playing screen just behind the booth.)
 const scr = makeCanvas(1024, 576);
+const bigScreen = new THREE.Group(); scene.add(bigScreen);
 {
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(3.9, 2.19), new THREE.MeshBasicMaterial({ map: scr.tex, toneMapped: false, fog: false }));
-  screen.position.set(0, 4.8, -9); screen.scale.setScalar(1.7); scene.add(screen);
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(4.02, 2.31, 0.06), dark); frame.position.set(0, 4.8, -9.06); frame.scale.set(1.7, 1.7, 1); scene.add(frame);
+  bigScreen.add(screen);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(4.02, 2.31, 0.06), dark); frame.position.z = -0.035; bigScreen.add(frame);
+}
+let passthrough = false;
+function placeScreen() {
+  if (passthrough) { bigScreen.position.set(0, deskH + 0.66, -1.35); bigScreen.scale.setScalar(0.25); bigScreen.rotation.x = 0.12; }
+  else { bigScreen.position.set(0, 4.8, -9); bigScreen.scale.setScalar(1.7); bigScreen.rotation.x = 0; }
+}
+// Passthrough: your real room, with only the booth, your playlists and what's playing.
+function setPassthrough(on) {
+  passthrough = on;
+  scene.background = on ? null : BG; scene.fog = on ? null : FOG;
+  renderer.setClearAlpha(on ? 0 : 1);
+  world.env.visible = world.show.visible = !on;
+  fxPanel.g.visible = mic.visible = micDock.visible = !on;
+  if (on && S.micHeld) dropMic();
+  placeScreen();
 }
 
 let deskH = 0.95;
@@ -533,6 +551,7 @@ function setDeskH(h) {
   crate.g.position.y = deskH + 0.32;
   devPanel.g.position.y = deskH + 0.45;
   fxPanel.g.position.y = deskH + 0.32;
+  placeScreen();
   try { localStorage.setItem('neonbooth.deskH', String(deskH)); } catch {}
 }
 setDeskH(deskH);
@@ -802,7 +821,7 @@ let calib = 0;
 async function enterXR(mode) {
   if (renderer.xr.isPresenting) return;
   const ar = mode === 'immersive-ar';
-  const name = ar ? 'mixed reality' : 'VR';
+  const name = ar ? 'passthrough' : 'VR';
   if (!navigator.xr) { setStatus(`Can't start ${name}: this browser has no WebXR. Use the Meta Quest browser.`); return; }
   setStatus(`Starting ${name}…`);
   let session;
@@ -813,11 +832,9 @@ async function enterXR(mode) {
     setStatus(`Headset refused ${name} (${e.name}: ${e.message}). If the Quest asked to allow VR, choose Allow, then try again.`);
     return;
   }
-  scene.background = ar ? null : BG; scene.fog = ar ? null : FOG;
-  world.env.visible = !ar;
-  renderer.setClearAlpha(ar ? 0 : 1);
+  setPassthrough(ar);
   session.addEventListener('end', () => {
-    scene.background = BG; scene.fog = FOG; world.env.visible = true; renderer.setClearAlpha(1); desktopCam();
+    setPassthrough(false); desktopCam();
     setStatus(`Left ${name}`);
   });
   try {
@@ -969,4 +986,4 @@ if (navigator.xr) {
 })();
 
 // Handy for debugging from the console
-window.booth = { S, beat, voice, items, setDeskH, fx, longDrop, mixToNext, hype, micItem };
+window.booth = { S, setPassthrough, beat, voice, items, setDeskH, fx, longDrop, mixToNext, hype, micItem };
