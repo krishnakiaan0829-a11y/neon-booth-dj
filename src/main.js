@@ -7,6 +7,7 @@ import { createWorld, PYRO, CO2 } from './world.js';
 import { createFX } from './fx.js';
 import { HITS } from './hits.js';
 import { Input } from './input.js';
+import { Voice } from './voice.js';
 import { makeCanvas, hsl, getImage, whenImage, ellipsize, drawCover, hueOf, fmtTime } from './ui.js';
 
 const $ = id => document.getElementById(id);
@@ -18,7 +19,7 @@ const SCRUB_PER_RAD = 8000 / TAU;      // one full turn of the platter = 8 secon
 const S = {
   backend: null, st: null, lastTrackId: null, queue: [], playlists: [], page: 0, devices: [],
   saved: false, baseVol: 70, volTouch: 0, xf: 0, deck: 0, transitioning: false, scrub: null,
-  fx: { color: 0, laser: 0.75, speed: 0.45 }, auto: false, beams: true, dropUntil: 0, beatN: 0, fading: false, albumHue: null, toast: '', toastUntil: 0, errAt: {},
+  fx: { color: 0, laser: 0.75, speed: 0.45 }, auto: false, beams: true, dropUntil: 0, beatN: 0, fading: false, albumHue: null, cheer: 0, micHeld: null, toast: '', toastUntil: 0, errAt: {},
 };
 const FX = { hue: 0.86, drop: 0, playing: false };
 
@@ -333,6 +334,78 @@ makePad(top, { x: -0.1, z: 0.02, w: 0.075, d: 0.075, label: 'DEVICE', sub: 'spea
 makePad(top, { x: 0.0, z: 0.02, w: 0.075, d: 0.075, label: '▲', sub: 'desk up', color: 0x6a6a8a, onPress: () => setDeskH(deskH + 0.03) });
 makePad(top, { x: 0.1, z: 0.02, w: 0.075, d: 0.075, label: '▼', sub: 'desk down', color: 0x6a6a8a, onPress: () => setDeskH(deskH - 0.03) });
 
+// ---------------------------------------------------------------- MC mic
+// Pick it up (pinch it, squeeze the grip, or point and pull the trigger), talk, and the
+// crowd answers when you stop. Only listens while it's in your hand.
+const voice = new Voice();
+const MIC_STAND = new THREE.Vector3(0.73, 0.145, -0.22);
+const micGlow = new THREE.MeshBasicMaterial({ color: 0xff2bd6, toneMapped: false });
+const mic = new THREE.Group(); scene.add(mic);
+{
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.0135, 0.0105, 0.14, 16), dark); handle.position.y = -0.072; mic.add(handle);
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.0145, 0.022, 18), metal); collar.position.y = 0.006; mic.add(collar);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.0168, 0.0028, 8, 28), micGlow); ring.rotation.x = Math.PI / 2; ring.position.y = 0.017; mic.add(ring);
+  const grille = new THREE.Mesh(new THREE.SphereGeometry(0.028, 20, 14), new THREE.MeshStandardMaterial({ color: 0xb8b8c8, metalness: 0.85, roughness: 0.4 }));
+  grille.position.y = 0.04; mic.add(grille);
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.0285, 12, 8), new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true, transparent: true, opacity: 0.5 }));
+  mesh.position.y = 0.04; mic.add(mesh);
+  const cradle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.036, 0.02, 24), metal); cradle.position.set(MIC_STAND.x, 0.01, MIC_STAND.z); top.add(cradle);
+  const cradleRing = new THREE.Mesh(new THREE.TorusGeometry(0.031, 0.002, 6, 32), neon(true)); cradleRing.rotation.x = Math.PI / 2; cradleRing.position.set(MIC_STAND.x, 0.021, MIC_STAND.z); top.add(cradleRing);
+  makeText(top, 'MC MIC', MIC_STAND.x, MIC_STAND.z + 0.06, 0.07, 0.018, { color: '#ffd27a' });
+}
+const micHit = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.2, 0.075), hidden); micHit.position.y = -0.03; mic.add(micHit);
+const UP = new THREE.Vector3(0, 1, 0), _mp = new THREE.Vector3(), _md = new THREE.Vector3(), _mq = new THREE.Quaternion();
+const micItem = {
+  kind: 'drag', hold: true, mesh: micHit, frame: top,
+  onDragStart(l, p) { grabMic(p); },
+  onHold(p) {
+    input.holdPoint(p, _mp);
+    mic.position.lerp(_mp, 0.7);
+    _md.setFromMatrixPosition(camera.matrixWorld).sub(mic.position).normalize();
+    _mq.setFromUnitVectors(UP, _md);
+    mic.quaternion.slerp(_mq, 0.5);
+  },
+  onDragEnd() { dropMic(); },
+};
+micHit.userData.item = micItem; items.push(micItem);
+
+function grabMic(p) {
+  S.micHeld = p.id;
+  voice.wake();
+  if (voice.micOn) { toast('Mic is live - talk to the crowd'); return; }
+  voice.enableMic().then(ok => {
+    if (!S.micHeld) { voice.disableMic(); return; }
+    toast(ok ? 'Mic is live - talk to the crowd' : 'Mic blocked: exit VR, allow the microphone for this site, grab it again');
+  });
+}
+function dropMic() { S.micHeld = null; voice.disableMic(); }
+function micTick(dt) {
+  if (!S.micHeld) {      // glide back to the cradle
+    top.updateMatrixWorld();
+    _mp.copy(MIC_STAND).applyMatrix4(top.matrixWorld);
+    top.getWorldQuaternion(_mq);
+    mic.position.lerp(_mp, Math.min(1, dt * 10));
+    mic.quaternion.slerp(_mq, Math.min(1, dt * 10));
+  } else voice.update(dt);
+  const lv = voice.talking ? 1 : clamp((voice.level - voice.floor) * 6, 0, 1);
+  micGlow.color.setHSL(FX.hue, 1, 0.35 + 0.35 * lv).multiplyScalar(S.micHeld ? 1 + lv * 1.5 : 0.6);
+  mic.scale.setScalar(micItem.hover && !S.micHeld ? 1.1 : 1);
+}
+voice.onStart = () => { S.listenSince = performance.now(); };
+voice.onEnd = dur => {
+  if (dur < 0.3) return;
+  const size = clamp(0.35 + dur * 0.1 + (voice.peak - voice.floor - 0.11) * 2, 0.3, 1);
+  hype(size);
+};
+// The crowd answers: a roar you can hear, everyone jumping, and pyro on the big ones.
+function hype(size) {
+  S.cheer = Math.max(S.cheer, size);
+  voice.cheer(size);
+  if (size > 0.6) { fx.fire(0.6 + size); fx.co2(1); }
+  if (size > 0.85) fx.fireworks(4, 2.5, FX.hue);
+  toast(size > 0.85 ? 'The whole stadium is screaming' : size > 0.6 ? 'Crowd goes wild' : 'Crowd cheers');
+}
+
 // Little LCD above the mixer
 const lcd = makeCanvas(640, 140);
 {
@@ -570,6 +643,7 @@ async function mixToNext() {
     S.deck = nextDeck;
     if (S.queue[0] && S.st) { S.st.track = S.queue.shift(); S.st.progressMs = 0; S.st.fetchedAt = performance.now(); }
     fx.fire(1.2); fx.co2(1.5); FX.drop = 1;
+    S.cheer = Math.max(S.cheer, 0.6); voice.cheer(0.5);
     if (canFade) {
       for (let k = 1; k <= 6; k++) {
         const v = Math.round(from * (k / 6));
@@ -592,6 +666,7 @@ async function mixToNext() {
 function longDrop() {
   S.dropUntil = performance.now() + 8000;
   fx.co2(2); fx.fire(1); fx.fireworks(8, 7, FX.hue);
+  S.cheer = 1; voice.cheer(0.8);
   toast('DROP!');
 }
 
@@ -701,13 +776,19 @@ function drawLCD() {
   ctx.strokeStyle = hsl(hue, 1, 0.55, 0.8); ctx.lineWidth = 4; ctx.strokeRect(2, 2, w - 4, h - 4);
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   ctx.fillStyle = hsl(hue, 1, 0.7); ctx.font = '900 54px ui-monospace,Menlo,monospace';
-  ctx.fillText(beat.micOn ? 'MIC' : String(beat.bpm), 22, h / 2 - 10);
+  ctx.fillText(S.micHeld ? 'MC' : beat.micOn ? 'MIC' : String(beat.bpm), 22, h / 2 - 10);
   ctx.font = '700 20px ui-monospace,Menlo,monospace'; ctx.fillStyle = 'rgba(255,255,255,.6)';
-  ctx.fillText(beat.micOn ? 'SYNC' : 'BPM', 24, h - 26);
+  ctx.fillText(S.micHeld ? 'LIVE' : beat.micOn ? 'SYNC' : 'BPM', 24, h - 26);
+  if (S.micHeld) {     // voice meter
+    const lv = clamp((voice.level - voice.floor) * 4, 0, 1);
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(180, h - 22, w - 210, 8);
+    ctx.fillStyle = voice.talking ? '#39ff88' : hsl(hue, 1, 0.6); ctx.fillRect(180, h - 22, (w - 210) * lv, 8);
+  }
   // beat dot
   ctx.fillStyle = hsl(hue + 0.45, 1, 0.6, 0.25 + 0.75 * beat.pulse);
   ctx.beginPath(); ctx.arc(150, h / 2, 12, 0, TAU); ctx.fill();
   const msg = now < S.toastUntil ? S.toast
+    : S.micHeld ? (voice.talking ? 'The crowd is listening…' : voice.micOn ? 'Talk to the crowd, then pause' : 'Waiting for the mic…')
     : !S.backend ? 'Open the menu: connect Spotify'
     : S.st?.device ? `Speaker: ${S.st.device.name}  ·  vol ${targetVol()}%` : 'Press DEVICE to pick a speaker';
   ctx.fillStyle = now < S.toastUntil ? '#fff' : 'rgba(255,255,255,.8)';
@@ -786,7 +867,9 @@ renderer.setAnimationLoop(() => {
   FX.hue = (FX.hue + dh * Math.min(1, dt * 1.5) + 1) % 1;
   const pulse = beat.pulse * (playing ? 1 : 0.15);
 
-  world.update(t, dt, { hue: FX.hue, pulse: beat.pulse, laser: S.fx.laser, speed: S.fx.speed, playing, drop: Math.min(1, FX.drop), beams: S.beams });
+  S.cheer = Math.max(0, S.cheer - dt * 0.28);
+  voice.cheerGain = S.cheer;
+  world.update(t, dt, { hue: FX.hue, pulse: beat.pulse, laser: S.fx.laser, speed: S.fx.speed, playing, drop: Math.min(1, FX.drop), beams: S.beams, cheer: S.cheer, listen: voice.talking ? 1 : 0 });
 
   tmpC.setHSL(FX.hue, 1, 0.5);
   for (const m of neonA) m.color.copy(tmpC).multiplyScalar(0.7 + 0.5 * pulse);
@@ -813,6 +896,7 @@ renderer.setAnimationLoop(() => {
   padAuto.lit = S.auto;
   padBeams.lit = S.beams;
   for (const it of items) it.tick?.(dt);
+  micTick(dt);
 
   input.update(presenting);
   if (volPending && now - volSentAt > 250) pushVolume();
@@ -844,12 +928,13 @@ ui.connect.onclick = () => {
   sp.login();
 };
 ui.demo.onclick = () => {
+  voice.wake();
   if (S.backend?.label === 'Demo') return;
   useBackend(new DemoBackend());
   setStatus('Demo mode: fake tracks, no Spotify needed');
 };
-ui.vr.onclick = () => enterXR('immersive-vr');
-ui.mr.onclick = () => enterXR('immersive-ar');
+ui.vr.onclick = () => { voice.wake(); enterXR('immersive-vr'); };
+ui.mr.onclick = () => { voice.wake(); enterXR('immersive-ar'); };
 ui.mic.onchange = async () => {
   if (ui.mic.checked) { const ok = await beat.enableMic(); ui.mic.checked = ok; if (!ok) setStatus('Mic was blocked. Allow it in the browser to use mic sync.'); }
   else beat.disableMic();
@@ -884,4 +969,4 @@ if (navigator.xr) {
 })();
 
 // Handy for debugging from the console
-window.booth = { S, beat, items, setDeskH, fx, longDrop, mixToNext };
+window.booth = { S, beat, voice, items, setDeskH, fx, longDrop, mixToNext, hype, micItem };

@@ -207,6 +207,7 @@ export function createWorld(scene) {
 
   function update(t, dt, fx) {
     const { hue, pulse, laser, playing, drop, beams } = fx;
+    const cheer = fx.cheer || 0, listen = fx.listen || 0;
     const live = playing ? 1 : 0.12;
     const p = Math.min(1, pulse * live + drop * 0.6);
     C1.setHSL(hue, 1, 0.56); C2.setHSL((hue + 0.45) % 1, 1, 0.56);
@@ -222,15 +223,16 @@ export function createWorld(scene) {
     for (const m of edgeMats) m.color.copy(C1).multiplyScalar(0.5 + p);
     rim.material.color.copy(C2).multiplyScalar(0.3 + 0.7 * p);
 
-    standsMat.color.copy(C1).multiplyScalar(0.25 + 0.9 * p).addScalar(0.35);
+    standsMat.color.copy(C1).multiplyScalar(0.25 + 0.9 * p + 0.9 * cheer).addScalar(0.35 + 0.25 * cheer);
     pitchMat.color.copy(standsMat.color);
-    phoneMat.opacity = 0.45 + 0.35 * Math.sin(t * 1.3) * Math.sin(t * 0.7) + 0.2 * p;
+    phoneMat.opacity = Math.min(1, 0.45 + 0.35 * Math.sin(t * 1.3) * Math.sin(t * 0.7) + 0.2 * p + 0.45 * listen + 0.3 * cheer);
 
-    crowd.mat.color.copy(C1).multiplyScalar(0.3 + 1.1 * p).addScalar(0.1);
+    crowd.mat.color.copy(C1).multiplyScalar(0.3 + 1.1 * p + 0.8 * cheer).addScalar(0.1 + 0.15 * cheer);
     for (const { im, list } of crowd) {
       for (let i = 0; i < list.length; i++) {
         const s = list[i];
-        const jump = playing ? Math.pow(Math.max(0, pulse - 0.15 * Math.sin(s.wave)), 1.6) * 0.32 * s.j + drop * 0.3 * s.j * (0.5 + 0.5 * Math.sin(t * 9 + s.ph)) : 0;
+        const jump = (playing ? Math.pow(Math.max(0, pulse - 0.15 * Math.sin(s.wave)), 1.6) * 0.32 * s.j + drop * 0.3 * s.j * (0.5 + 0.5 * Math.sin(t * 9 + s.ph)) : 0)
+          + cheer * 0.5 * s.j * Math.abs(Math.sin(t * 7.5 + s.ph));
         dummy.position.set(s.x, FIELD_Y + jump, s.z);
         dummy.rotation.set(0, Math.PI + s.rot + Math.sin(t * 0.6 + s.ph) * 0.2, Math.sin(t * 2.2 + s.ph) * (playing ? 0.1 : 0.03));
         dummy.scale.setScalar(s.s);

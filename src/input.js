@@ -167,7 +167,7 @@ export class Input {
         it.onDrag?.(l, p);
       } else {
         if (!grab) { this._endDirect(p); return; }
-        it.onDrag?.(it.frame.worldToLocal(_v.copy(grab)), p);
+        if (it.hold) it.onHold?.(p); else it.onDrag?.(it.frame.worldToLocal(_v.copy(grab)), p);
       }
       it.hover = true;
       return;
@@ -200,12 +200,24 @@ export class Input {
     it.onDragEnd?.(p);
   }
 
+  // Where a held object sits: between finger and thumb, in the controller grip,
+  // or just below the view on desktop.
+  holdPoint(p, out) {
+    if (p.id === 'mouse') return out.set(0.1, -0.13, -0.32).applyMatrix4(this.camera.matrixWorld);
+    if (p.source?.hand) {
+      const ji = p.hand.joints?.['index-finger-tip'], jt = p.hand.joints?.['thumb-tip'];
+      if (ji && jt) { ji.getWorldPosition(out); jt.getWorldPosition(_th); return out.add(_th).multiplyScalar(0.5); }
+    }
+    return p.grip.getWorldPosition(out);
+  }
+
   update(presenting) {
     for (const it of this.items) it.hover = false;
     if (!presenting) {
       for (const p of this.xr) { p.dot.visible = false; }
       const m = this.mouse;
-      if (m.drag) { const l = this._local(m, m.drag); if (l) m.drag.onDrag?.(l, m); m.drag.hover = true; }
+      if (m.drag?.hold) { m.drag.onHold?.(m); m.drag.hover = true; }
+      else if (m.drag) { const l = this._local(m, m.drag); if (l) m.drag.onDrag?.(l, m); m.drag.hover = true; }
       else if (m.inside && !m.look) { const h = this._hit(m); if (h) h.item.hover = true; }
       return;
     }
@@ -215,7 +227,8 @@ export class Input {
       if (p.direct) { p.line.visible = false; p.dot.visible = false; continue; }
       p.line.visible = !(p.source.hand && p.nearUI);
       const h = this._hit(p);
-      if (p.drag) {
+      if (p.drag?.hold) { p.drag.onHold?.(p); p.drag.hover = true; }
+      else if (p.drag) {
         const l = this._local(p, p.drag);
         if (l) p.drag.onDrag?.(l, p);
         p.drag.hover = true;
