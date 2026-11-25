@@ -646,19 +646,38 @@ let calib = 0;
 async function enterXR(mode) {
   if (renderer.xr.isPresenting) return;
   const ar = mode === 'immersive-ar';
+  const name = ar ? 'mixed reality' : 'VR';
+  if (!navigator.xr) { setStatus(`Can't start ${name}: this browser has no WebXR. Use the Meta Quest browser.`); return; }
+  setStatus(`Starting ${name}…`);
+  let session;
   try {
-    const session = await navigator.xr.requestSession(mode, { requiredFeatures: ['local-floor'], optionalFeatures: ['hand-tracking'] });
-    scene.background = ar ? null : BG; scene.fog = ar ? null : FOG;
-    world.env.visible = !ar;
-    renderer.setClearAlpha(ar ? 0 : 1);
-    session.addEventListener('end', () => {
-      scene.background = BG; scene.fog = FOG; world.env.visible = true; renderer.setClearAlpha(1); desktopCam();
-    });
-    await renderer.xr.setSession(session);
-    calib = 40;     // measure head height after the pose settles
+    // Everything optional so the headset can't refuse the session over a feature.
+    session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] });
   } catch (e) {
-    setStatus(`Could not start ${ar ? 'mixed reality' : 'VR'}: ${e.message}`);
+    setStatus(`Headset refused ${name} (${e.name}: ${e.message}). If the Quest asked to allow VR, choose Allow, then try again.`);
+    return;
   }
+  scene.background = ar ? null : BG; scene.fog = ar ? null : FOG;
+  world.env.visible = !ar;
+  renderer.setClearAlpha(ar ? 0 : 1);
+  session.addEventListener('end', () => {
+    scene.background = BG; scene.fog = FOG; world.env.visible = true; renderer.setClearAlpha(1); desktopCam();
+    setStatus(`Left ${name}`);
+  });
+  try {
+    renderer.xr.setReferenceSpaceType('local-floor');
+    await renderer.xr.setSession(session);
+  } catch (e) {
+    try {   // no floor tracking: fall back to a head-relative space
+      renderer.xr.setReferenceSpaceType('local');
+      await renderer.xr.setSession(session);
+    } catch (e2) {
+      setStatus(`Could not start ${name}: ${e2.name}: ${e2.message}`);
+      session.end().catch(() => {});
+      return;
+    }
+  }
+  calib = 40;     // measure head height after the pose settles
 }
 const _head = new THREE.Vector3();
 function calibrate() {
@@ -754,8 +773,9 @@ $('hide').onclick = () => { $('panel').hidden = true; $('show').hidden = false; 
 $('show').onclick = () => { $('panel').hidden = false; $('show').hidden = true; };
 
 if (navigator.xr) {
-  navigator.xr.isSessionSupported('immersive-vr').then(ok => { ui.vr.disabled = !ok; if (!ok) ui.hint.textContent = 'VR needs a headset. Here you can drag to look around and click the controls.'; }).catch(() => {});
-  navigator.xr.isSessionSupported('immersive-ar').then(ok => { ui.mr.disabled = !ok; }).catch(() => {});
+  // Buttons stay clickable; a failed start reports the real reason instead of a dead button.
+  ui.vr.disabled = false; ui.mr.disabled = false;
+  navigator.xr.isSessionSupported('immersive-vr').then(ok => { if (!ok) ui.hint.textContent = 'This browser says it has no VR headset. On the Quest, open this page in the Meta Quest browser.'; }).catch(() => {});
 } else {
   ui.hint.textContent = window.isSecureContext
     ? 'Open this page in the Meta Quest browser to enter VR. Here: drag to look, click the controls.'
