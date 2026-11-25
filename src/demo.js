@@ -62,6 +62,7 @@ export class DemoBackend {
   async shuffle(on) { this.shuf = on; }
   async repeat(m) { this.rep = m; }
   async playContext(uri) { this._tick(); this.i = Number(uri.split(':').pop()) % this.tracks.length; this.pos = 0; this.playing = true; }
+  async playUris() { this._tick(); this.i = 0; this.pos = 0; this.playing = true; }
   async transfer(id) { this.devices.forEach(d => { d.active = d.id === id; }); this.playing = true; }
   async isSaved(uri) { return this.saved.has(uri); }
   async save(uri) { this.saved.add(uri); }

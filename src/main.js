@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import * as sp from './spotify.js';
 import { DemoBackend } from './demo.js';
 import { Beat } from './beat.js';
-import { createWorld } from './world.js';
+import { createWorld, PYRO, CO2 } from './world.js';
+import { createFX } from './fx.js';
+import { HITS } from './hits.js';
 import { Input } from './input.js';
 import { makeCanvas, hsl, getImage, whenImage, ellipsize, drawCover, hueOf, fmtTime } from './ui.js';
 
@@ -16,7 +18,7 @@ const SCRUB_PER_RAD = 8000 / TAU;      // one full turn of the platter = 8 secon
 const S = {
   backend: null, st: null, lastTrackId: null, queue: [], playlists: [], page: 0, devices: [],
   saved: false, baseVol: 70, volTouch: 0, xf: 0, deck: 0, transitioning: false, scrub: null,
-  fx: { color: 0, laser: 0.75, speed: 0.45 }, albumHue: null, toast: '', toastUntil: 0, errAt: {},
+  fx: { color: 0, laser: 0.75, speed: 0.45 }, auto: false, beams: true, dropUntil: 0, beatN: 0, fading: false, albumHue: null, toast: '', toastUntil: 0, errAt: {},
 };
 const FX = { hue: 0.86, drop: 0, playing: false };
 
@@ -31,7 +33,7 @@ $('stage').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 const BG = new THREE.Color(0x05010c);
-const FOG = new THREE.FogExp2(0x07010f, 0.04);
+const FOG = new THREE.FogExp2(0x07010f, 0.012);
 scene.background = BG; scene.fog = FOG;
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.02, 220);
@@ -49,6 +51,7 @@ const keyLight = new THREE.DirectionalLight(0xffffff, 0.9); keyLight.position.se
 const boothLight = new THREE.PointLight(0xff2bd6, 2.5, 4, 1.5); boothLight.position.set(0, 1.7, -0.95); scene.add(boothLight);
 
 const world = createWorld(scene);
+const fx = createFX(world.show, { pyro: PYRO, co2: CO2 });
 const beat = new Beat();
 const items = [];
 const input = new Input(renderer, scene, camera, items);
@@ -226,7 +229,7 @@ const decks = [0, 1].map(i => {
   tagMesh.position.set(0, 0.045, -0.215); tagMesh.rotation.x = -0.45; g.add(tagMesh);
   const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.04, 24), hidden); hit.position.y = 0.02; g.add(hit);
   const it = {
-    kind: 'drag', mesh: hit, frame: top, i, spin, ring, ringMat, lab, tag, track: undefined, role: null, frac: -1, acc: 0, a0: 0,
+    kind: 'drag', touch: true, cx: x, cz: z, r: 0.175, mesh: hit, frame: top, i, spin, ring, ringMat, lab, tag, track: undefined, role: null, frac: -1, acc: 0, a0: 0,
     ang(l) { return Math.atan2(l.z - z, l.x - x); },
     onDragStart(l) {
       this.a0 = this.ang(l); this.acc = 0;
@@ -317,7 +320,7 @@ const xFader = makeFader(top, {
 });
 makeText(top, 'A', -0.162, 0.185, 0.03, 0.03, { color: '#ff4fe0' });
 makeText(top, 'B', 0.162, 0.185, 0.03, 0.03, { color: '#4feaff' });
-makeText(top, 'CROSSFADE TO DROP THE NEXT TRACK', 0, 0.228, 0.26, 0.016, { size: 0.7 });
+makeText(top, 'SLIDE ACROSS TO MIX THE NEXT TRACK', 0, 0.228, 0.26, 0.016, { size: 0.7 });
 
 makeKnob(top, { x: -0.1, z: -0.205, label: 'COLOR', value: 0, onChange: v => { S.fx.color = v; } });
 makeKnob(top, { x: 0.0, z: -0.205, label: 'LASERS', value: S.fx.laser, onChange: v => { S.fx.laser = v; } });
@@ -325,7 +328,7 @@ makeKnob(top, { x: 0.1, z: -0.205, label: 'SPEED', value: S.fx.speed, onChange: 
 
 const padTap = makePad(top, { x: -0.1, z: -0.085, w: 0.075, d: 0.075, label: 'TAP', sub: '124 BPM', color: 0xffb02b, onPress: () => { const b = beat.tap(); padTap.label('TAP', b + ' BPM'); } });
 const padMic = makePad(top, { x: 0.0, z: -0.085, w: 0.075, d: 0.075, label: 'MIC', sub: 'off', color: 0xffb02b, onPress: () => toggleMic() });
-makePad(top, { x: 0.1, z: -0.085, w: 0.075, d: 0.075, label: 'DROP', sub: 'lights', color: 0xff2b4f, onPress: () => { FX.drop = 1.3; } });
+makePad(top, { x: 0.1, z: -0.085, w: 0.075, d: 0.075, label: 'DROP', sub: '8 sec', color: 0xff2b4f, onPress: () => longDrop() });
 makePad(top, { x: -0.1, z: 0.02, w: 0.075, d: 0.075, label: 'DEVICE', sub: 'speaker', color: 0x8b5cff, onPress: () => toggleDevices() });
 makePad(top, { x: 0.0, z: 0.02, w: 0.075, d: 0.075, label: '▲', sub: 'desk up', color: 0x6a6a8a, onPress: () => setDeskH(deskH + 0.03) });
 makePad(top, { x: 0.1, z: 0.02, w: 0.075, d: 0.075, label: '▼', sub: 'desk down', color: 0x6a6a8a, onPress: () => setDeskH(deskH - 0.03) });
@@ -344,7 +347,8 @@ for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) {
   const pad = makePad(crate.face, { x: -0.21 + c * 0.14, z: -0.115 + r * 0.14, w: 0.125, d: 0.125, color: 0xffffff, onPress: () => {
     if (!pad.pl) return;
     toast('Playing ' + pad.pl.name);
-    act(b => b.playContext(pad.pl.uri), 700);
+    const pl = pad.pl;
+    act(b => pl.uris ? b.playUris(pl.uris) : b.playContext(pl.uri), 700);
   } });
   pad.cv = makeCanvas(256, 256);
   pad.mesh.children[0].material.map = pad.cv.tex;
@@ -358,11 +362,23 @@ const pageCv = makeCanvas(256, 64);
   m.rotation.x = -Math.PI / 2; m.position.set(0, 0.002, 0.19); crate.face.add(m);
 }
 
+function drawHitsTile(ctx) {
+  const g = ctx.createLinearGradient(0, 256, 0, 0);
+  g.addColorStop(0, '#ff2a00'); g.addColorStop(0.45, '#ff8a00'); g.addColorStop(1, '#2a0040');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+  ctx.fillStyle = 'rgba(255,240,180,.9)';
+  for (let k = 0; k < 7; k++) {          // little flame tongues
+    const x = 18 + k * 37, h = 70 + (k % 3) * 28;
+    ctx.beginPath(); ctx.moveTo(x - 16, 256); ctx.quadraticCurveTo(x - 10, 256 - h * 0.6, x, 256 - h); ctx.quadraticCurveTo(x + 10, 256 - h * 0.6, x + 16, 256); ctx.fill();
+  }
+  ctx.fillStyle = '#fff'; ctx.font = '900 44px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('VIRAL', 128, 60); ctx.fillText('HOUSE', 128, 108);
+}
 function drawCratePad(pad) {
   const pl = pad.pl, { ctx } = pad.cv;
   ctx.clearRect(0, 0, 256, 256);
   if (!pl) { ctx.fillStyle = '#120d1c'; ctx.fillRect(0, 0, 256, 256); pad.cv.update(); pad.base.setRGB(0.35, 0.3, 0.45); return; }
-  drawCover(ctx, getImage(pl.art), 0, 0, 256, 256, pl.name, FX.hue);
+  if (pl.hits) drawHitsTile(ctx); else drawCover(ctx, getImage(pl.art), 0, 0, 256, 256, pl.name, FX.hue);
   const g = ctx.createLinearGradient(0, 150, 0, 256); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.85)');
   ctx.fillStyle = g; ctx.fillRect(0, 150, 256, 106);
   ctx.fillStyle = '#fff'; ctx.font = '800 30px system-ui,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
@@ -409,12 +425,29 @@ async function toggleDevices() {
   });
 }
 
+// FX: fire and light cannons, to the right of the booth
+const fxPanel = makePanel(booth, { pos: new THREE.Vector3(0.98, 1.27, 0.14), yaw: -1.1, lean: 0.35, w: 0.62, h: 0.5, title: 'FX  ·  FIRE & LIGHTS' });
+const fxDefs = [
+  ['FIRE', 'flames', 0xff6a00, () => fx.fire(2.5)],
+  ['CO2', 'jets', 0x9fe8ff, () => fx.co2(2.5)],
+  ['BOOM', 'fireworks', 0xffd400, () => fx.fireworks(10, 6)],
+  ['DROP', '8 seconds', 0xff2b4f, () => longDrop()],
+  ['AUTO', 'fire on beat', 0xff2bd6, () => { S.auto = !S.auto; toast(S.auto ? 'Auto pyro on: fire every bar' : 'Auto pyro off'); }],
+  ['BEAMS', 'sky lights', 0x2be8ff, () => { S.beams = !S.beams; }],
+];
+const fxPads = fxDefs.map(([label, sub, color, fn], k) => {
+  const pad = makePad(fxPanel.face, { x: -0.195 + (k % 3) * 0.195, z: -0.085 + Math.floor(k / 3) * 0.17, w: 0.17, d: 0.14, label, sub, color, onPress: fn });
+  pad.lit = true;
+  return pad;
+});
+const padAuto = fxPads[4], padBeams = fxPads[5];
+
 // Big LED screen over the dance floor
 const scr = makeCanvas(1024, 576);
 {
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(3.9, 2.19), new THREE.MeshBasicMaterial({ map: scr.tex, toneMapped: false, fog: false }));
-  screen.position.set(0, 3.05, -5.5); scene.add(screen);
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(4.02, 2.31, 0.06), dark); frame.position.set(0, 3.05, -5.54); scene.add(frame);
+  screen.position.set(0, 4.8, -9); screen.scale.setScalar(1.7); scene.add(screen);
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(4.02, 2.31, 0.06), dark); frame.position.set(0, 4.8, -9.06); frame.scale.set(1.7, 1.7, 1); scene.add(frame);
 }
 
 let deskH = 0.95;
@@ -426,6 +459,7 @@ function setDeskH(h) {
   body.position.set(0, (deskH - 0.07) / 2, -0.04);
   crate.g.position.y = deskH + 0.32;
   devPanel.g.position.y = deskH + 0.45;
+  fxPanel.g.position.y = deskH + 0.32;
   try { localStorage.setItem('neonbooth.deskH', String(deskH)); } catch {}
 }
 setDeskH(deskH);
@@ -492,9 +526,9 @@ async function toggleMic() {
 // Volume follows the master fader times the crossfader curve. Remote volume calls are
 // slow, so they are throttled; the last value always goes out.
 let volSentAt = 0, volPending = false, lastVol = -1;
-const targetVol = () => Math.round(S.baseVol * Math.cos(Math.min(1, Math.abs(S.xf - S.deck)) * Math.PI / 2));
+const targetVol = () => S.baseVol;
 function pushVolume(force = false) {
-  if (!S.backend || !S.st?.device) return;
+  if (!S.backend || !S.st?.device || S.fading) return;
   if (S.st.device.supportsVolume === false) { handleErr({ reason: 'VOLUME_CONTROL_DISALLOW' }, true); return; }
   const now = performance.now();
   if (!force && now - volSentAt < 250) { volPending = true; return; }
@@ -507,19 +541,58 @@ function pushVolume(force = false) {
 
 // Sliding the crossfader across fades the ON AIR deck down; past the far side the
 // next track drops in at full volume and the decks swap roles.
+// Crossing the middle of the crossfader starts a real mix: the volume ramps down over
+// ~3 s, the next track drops in, and the volume ramps back up. Spotify only lets us
+// change volume in steps, and phones/some speakers block remote volume entirely.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 function crossfade() {
-  pushVolume();
-  if (S.transitioning || !S.st?.track || Math.abs(S.xf - S.deck) < 0.9) return;
+  if (S.transitioning || !S.st?.track || Math.abs(S.xf - S.deck) < 0.5) return;
+  mixToNext();
+}
+async function mixToNext() {
   S.transitioning = true;
-  const nextDeck = 1 - S.deck;
-  FX.drop = 1.2;
-  toast(`DROP! Deck ${nextDeck ? 'B' : 'A'} is on air`);
-  S.backend.next().then(() => {
+  const b = S.backend, nextDeck = 1 - S.deck, from = S.baseVol;
+  const canFade = S.st?.device?.supportsVolume !== false;
+  try {
+    if (canFade) {
+      S.fading = true;
+      toast(`Mixing into deck ${nextDeck ? 'B' : 'A'}…`);
+      for (let k = 1; k <= 8; k++) {
+        const v = Math.round(from * Math.pow(1 - k / 8, 1.3));
+        S.mixVol = v;
+        await b.volume(v).catch(() => {});
+        await sleep(330);
+      }
+    } else {
+      toast('This speaker blocks volume, so it can only cut. Use the Mac or a computer to hear fades.');
+    }
+    await b.next();
     S.deck = nextDeck;
     if (S.queue[0] && S.st) { S.st.track = S.queue.shift(); S.st.progressMs = 0; S.st.fetchedAt = performance.now(); }
-    pushVolume(true);
+    fx.fire(1.2); fx.co2(1.5); FX.drop = 1;
+    if (canFade) {
+      for (let k = 1; k <= 6; k++) {
+        const v = Math.round(from * (k / 6));
+        S.mixVol = v;
+        await b.volume(v).catch(() => {});
+        await sleep(280);
+      }
+    }
+    toast(`Deck ${nextDeck ? 'B' : 'A'} is on air`);
+  } catch (e) {
+    handleErr(e);
+    if (canFade) b.volume(from).catch(() => {});
+  } finally {
+    S.fading = false; S.mixVol = null; S.transitioning = false;
+    S.volTouch = performance.now();
     setTimeout(poll, 400);
-  }).catch(handleErr).finally(() => { S.transitioning = false; });
+  }
+}
+
+function longDrop() {
+  S.dropUntil = performance.now() + 8000;
+  fx.co2(2); fx.fire(1); fx.fireworks(8, 7, FX.hue);
+  toast('DROP!');
 }
 
 let polling = false;
@@ -534,7 +607,7 @@ async function poll() {
     const id = st?.track?.id || null;
     if (id !== S.lastTrackId) { S.lastTrackId = id; onTrackChange(); }
     const d = st?.device;
-    if (d?.volume != null && !volFader.dragging && !xFader.dragging && performance.now() - S.volTouch > 4000 && Math.abs(S.xf - S.deck) < 0.05) {
+    if (d?.volume != null && !volFader.dragging && !xFader.dragging && performance.now() - S.volTouch > 4000 && !S.fading) {
       S.baseVol = d.volume; volFader.value = d.volume / 100;
     }
   } catch (e) { handleErr(e, true); } finally { polling = false; }
@@ -559,7 +632,9 @@ async function useBackend(b) {
   S.playlists = [];
   renderCrate();
   poll();
-  try { S.playlists = await b.getPlaylists(); } catch (e) { handleErr(e); }
+  S.playlists = [HITS];
+  renderCrate();
+  try { S.playlists = [HITS, ...await b.getPlaylists()]; } catch (e) { handleErr(e); }
   renderCrate();
 }
 
@@ -695,15 +770,23 @@ renderer.setAnimationLoop(() => {
   if (!presenting) camera.rotation.set(pitch, yaw, 0);
   if (presenting && calib > 0 && --calib === 0) calibrate();
 
-  beat.update();
+  const onBeat = beat.update();
   const playing = S.backend ? !!S.st?.isPlaying : true;    // attract mode before you connect
-  FX.drop = Math.max(0, FX.drop - dt * 0.9);
+  const dropping = now < S.dropUntil;
+  FX.drop = dropping ? 1 : Math.max(0, FX.drop - dt * 0.6);
+  if (onBeat && dropping) fx.fire(0.35);
+  if (onBeat && S.auto && playing) {
+    S.beatN++;
+    if (S.beatN % 4 === 0) fx.fire(0.3);
+    if (S.beatN % 16 === 0) fx.co2(1.2);
+  }
+  fx.update(dt, presenting ? 1000 : renderer.domElement.height * 0.5);
   const target = ((S.albumHue ?? 0.86) + S.fx.color) % 1;
   let dh = target - FX.hue; dh -= Math.round(dh);
   FX.hue = (FX.hue + dh * Math.min(1, dt * 1.5) + 1) % 1;
   const pulse = beat.pulse * (playing ? 1 : 0.15);
 
-  world.update(t, dt, { hue: FX.hue, pulse: beat.pulse, laser: S.fx.laser, speed: S.fx.speed, playing, drop: Math.min(1, FX.drop) });
+  world.update(t, dt, { hue: FX.hue, pulse: beat.pulse, laser: S.fx.laser, speed: S.fx.speed, playing, drop: Math.min(1, FX.drop), beams: S.beams });
 
   tmpC.setHSL(FX.hue, 1, 0.5);
   for (const m of neonA) m.color.copy(tmpC).multiplyScalar(0.7 + 0.5 * pulse);
@@ -727,6 +810,8 @@ renderer.setAnimationLoop(() => {
   padRep.lit = !!S.st && S.st.repeat !== 'off';
   padLike.lit = S.saved;
   padMic.lit = beat.micOn;
+  padAuto.lit = S.auto;
+  padBeams.lit = S.beams;
   for (const it of items) it.tick?.(dt);
 
   input.update(presenting);
@@ -799,4 +884,4 @@ if (navigator.xr) {
 })();
 
 // Handy for debugging from the console
-window.booth = { S, beat, items, setDeskH };
+window.booth = { S, beat, items, setDeskH, fx, longDrop, mixToNext };

@@ -8,6 +8,7 @@ import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 const _ray = new THREE.Raycaster();
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _v = new THREE.Vector3(), _tip = new THREE.Vector3(), _n = new THREE.Vector3(), _q = new THREE.Vector3();
 const _plane = new THREE.Plane();
+const _th = new THREE.Vector3(), _g = new THREE.Vector3(), _box = new THREE.Box3();
 
 function shown(o) { for (; o; o = o.parent) if (!o.visible) return false; return true; }
 
@@ -48,10 +49,15 @@ export class Input {
       ctrl.add(line);
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.006, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
       scene.add(dot);
-      const p = { id: 'xr' + i, ctrl, grip, hand, line, dot, source: null, drag: null, poke: new Map() };
+      const p = { id: 'xr' + i, ctrl, grip, hand, line, dot, source: null, drag: null, poke: new Map(), direct: null, pinch: false, squeeze: false, nearUI: false };
       ctrl.addEventListener('connected', e => { p.source = e.data; });
-      ctrl.addEventListener('disconnected', () => { this._end(p); p.source = null; p.dot.visible = false; });
-      ctrl.addEventListener('selectstart', () => { const hit = this._hit(p); if (hit) this._begin(p, hit); });
+      ctrl.addEventListener('disconnected', () => { this._end(p); if (p.direct) this._endDirect(p); p.source = null; p.dot.visible = false; });
+      ctrl.addEventListener('squeezestart', () => { p.squeeze = true; });
+      ctrl.addEventListener('squeezeend', () => { p.squeeze = false; });
+      ctrl.addEventListener('selectstart', () => {
+        if (p.direct || (p.source?.hand && p.nearUI)) return;   // hands near the desk touch things directly
+        const hit = this._hit(p); if (hit) this._begin(p, hit);
+      });
       ctrl.addEventListener('selectend', () => this._end(p));
       return p;
     });
@@ -121,13 +127,77 @@ export class Input {
     for (const it of this.items) {
       if (it.kind !== 'button' || !it.poke || (it.enabled && !it.enabled()) || !shown(it.mesh)) continue;
       const l = it.mesh.worldToLocal(_v.copy(_tip));
-      const inside = Math.abs(l.x) < it.hw + 0.008 && Math.abs(l.z) < it.hd + 0.008;
+      const inside = Math.abs(l.x) < it.hw + 0.012 && Math.abs(l.z) < it.hd + 0.012;
       let st = p.poke.get(it);
       if (!st) { st = { armed: false, down: false }; p.poke.set(it, st); }
       if (!inside || l.y > it.top + 0.09 || l.y < -0.06) { st.armed = false; st.down = false; continue; }
-      if (l.y > it.top + 0.004) { st.armed = true; if (l.y > it.top + 0.014) st.down = false; continue; }
-      if (st.armed && !st.down) { st.down = true; st.armed = false; it.press(p); this.buzz(p, 0.8, 35); }
+      if (l.y > it.top + 0.006) { st.armed = true; if (l.y > it.top + 0.014) st.down = false; continue; }
+      if (st.armed && !st.down && l.y <= it.top + 0.006) { st.down = true; st.armed = false; it.press(p); this.buzz(p, 0.8, 35); }
     }
+  }
+
+  // Direct hand use: touch a record to spin it, pinch (or squeeze the grip) on a
+  // fader/knob to move it. Works with tracked hands and with controllers.
+  _direct(p) {
+    let grab = null;
+    if (p.source.hand) {
+      const ji = p.hand.joints?.['index-finger-tip'], jt = p.hand.joints?.['thumb-tip'];
+      if (!ji || !jt) return;
+      ji.getWorldPosition(_tip); jt.getWorldPosition(_th);
+      const d = _tip.distanceTo(_th), was = p.pinch;
+      if (!p.pinch && d < 0.022) p.pinch = true; else if (p.pinch && d > 0.045) p.pinch = false;
+      p.pinchStart = p.pinch && !was;
+      if (p.pinch) grab = _g.copy(_tip).add(_th).multiplyScalar(0.5);
+    } else {
+      p.ctrl.getWorldPosition(_tip);
+      p.pinchStart = p.squeeze && !p.wasSqueeze; p.wasSqueeze = p.squeeze;
+      if (p.squeeze) grab = _g.copy(_tip);
+    }
+    p.nearUI = false;
+    for (const it of this.items) {
+      if (!shown(it.mesh)) continue;
+      it.mesh.getWorldPosition(_v);
+      if (_v.distanceToSquared(_tip) < 0.045) { p.nearUI = true; break; }
+    }
+    if (p.direct) {
+      const it = p.direct;
+      if (p.directMode === 'touch') {
+        const l = it.frame.worldToLocal(_v.copy(_tip));
+        if (l.y > 0.07 || Math.hypot(l.x - it.cx, l.z - it.cz) > it.r + 0.06) { this._endDirect(p); return; }
+        it.onDrag?.(l, p);
+      } else {
+        if (!grab) { this._endDirect(p); return; }
+        it.onDrag?.(it.frame.worldToLocal(_v.copy(grab)), p);
+      }
+      it.hover = true;
+      return;
+    }
+    if (p.drag) return;
+    for (const it of this.items) {
+      if (!it.touch || !shown(it.mesh)) continue;
+      const l = it.frame.worldToLocal(_v.copy(_tip));
+      if (Math.hypot(l.x - it.cx, l.z - it.cz) < it.r && l.y > -0.02 && l.y < 0.045) { this._startDirect(p, it, 'touch', l); return; }
+    }
+    if (p.pinchStart && grab) {
+      for (const it of this.items) {
+        if (it.kind !== 'drag' || it.touch || !shown(it.mesh)) continue;
+        const g = it.mesh.geometry;
+        if (!g.boundingBox) g.computeBoundingBox();
+        if (_box.copy(g.boundingBox).expandByScalar(0.035).containsPoint(it.mesh.worldToLocal(_v.copy(grab)))) {
+          this._startDirect(p, it, 'grab', it.frame.worldToLocal(_v.copy(grab)));
+          return;
+        }
+      }
+    }
+  }
+  _startDirect(p, it, mode, l) {
+    p.direct = it; p.directMode = mode; it.dragging = true;
+    it.onDragStart?.(l, p);
+    this.buzz(p, 0.4, 20);
+  }
+  _endDirect(p) {
+    const it = p.direct; p.direct = null; it.dragging = false;
+    it.onDragEnd?.(p);
   }
 
   update(presenting) {
@@ -141,7 +211,9 @@ export class Input {
     }
     for (const p of this.xr) {
       if (!p.source) { p.line.visible = false; p.dot.visible = false; continue; }
-      p.line.visible = true;
+      this._direct(p);
+      if (p.direct) { p.line.visible = false; p.dot.visible = false; continue; }
+      p.line.visible = !(p.source.hand && p.nearUI);
       const h = this._hit(p);
       if (p.drag) {
         const l = this._local(p, p.drag);

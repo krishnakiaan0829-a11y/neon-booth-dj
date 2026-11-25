@@ -144,6 +144,7 @@ export class SpotifyBackend {
   shuffle(on) { return api('PUT', `/me/player/shuffle?state=${on}`); }
   repeat(mode) { return api('PUT', `/me/player/repeat?state=${mode}`); }
   playContext(uri) { return api('PUT', '/me/player/play', { context_uri: uri }); }
+  playUris(uris) { return api('PUT', '/me/player/play', { uris }); }
   transfer(id) { return api('PUT', '/me/player', { device_ids: [id], play: true }); }
   async isSaved(uri) { const j = await api('GET', `/me/library/contains?uris=${encodeURIComponent(uri)}`); return !!j?.[0]; }
   save(uri) { return api('PUT', `/me/library?uris=${encodeURIComponent(uri)}`); }
