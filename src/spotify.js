@@ -1,6 +1,6 @@
 // Spotify Web API: PKCE login (no client secret in the browser) and playback control.
 // Player endpoints need Spotify Premium. Search max limit is 10 since Feb 2026.
-export const CLIENT_ID = '5308c2bbd33c4e669890ebff8173d808';
+export const CLIENT_ID = 'c2fc3aabfe424419bb157c3499cfc5e0';
 const SCOPES = [
   'user-read-playback-state', 'user-modify-playback-state', 'user-read-currently-playing',
   'playlist-read-private', 'playlist-read-collaborative', 'user-library-read', 'user-library-modify',
